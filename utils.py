@@ -61,7 +61,7 @@ def evaluate_multitask(model, dataloader, tokenizer, label_expansions, device='c
             
             # ===== worthiness（关键修复）=====
             # 保证 shape 一定是 (batch_size,)
-            preds_worthiness = (outputs['worthiness'] > 0.5).int().view(-1)
+            preds_worthiness = (torch.sigmoid(outputs['worthiness']) > 0.5).int().view(-1)
             
             # ===== 收集 =====
             all_preds_intent.extend(preds_intent.cpu().numpy().tolist())

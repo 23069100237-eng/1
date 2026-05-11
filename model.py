@@ -59,8 +59,6 @@ class TaskHead(nn.Module):
 
     def forward(self, x):
         logits = self.classifier(x)
-        if self.task_type == 'worthiness':
-            logits = torch.sigmoid(logits)
         return logits
 
 class CitationPromptModel(nn.Module):
@@ -290,7 +288,7 @@ class CitationPromptModel(nn.Module):
             reduction='mean'
         )
 
-        loss_worthiness = F.binary_cross_entropy(
+        loss_worthiness = F.binary_cross_entropy_with_logits(
             logits_worthiness.squeeze(),
             labels_worthiness,
             reduction='mean'
