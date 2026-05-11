@@ -87,12 +87,22 @@ def evaluate_multitask(model, dataloader, tokenizer, label_expansions, device='c
     import numpy as np
     
     # 意图识别指标
-    intent_labels_bin = label_binarize(intent_labels_filtered, classes=[0, 1, 2, 3, 4])
-    intent_auc = roc_auc_score(intent_labels_bin, np.eye(5)[intent_preds_filtered], average='macro', multi_class='ovr')
+    intent_auc = 0.0
+    try:
+        if len(set(intent_labels_filtered)) > 1:
+            intent_labels_bin = label_binarize(intent_labels_filtered, classes=[0, 1, 2, 3, 4])
+            intent_auc = roc_auc_score(intent_labels_bin, np.eye(5)[intent_preds_filtered], average='macro', multi_class='ovr')
+    except ValueError:
+        intent_auc = 0.0
     
     # 章节识别指标
-    section_labels_bin = label_binarize(section_labels_filtered, classes=[0, 1, 2, 3, 4])
-    section_auc = roc_auc_score(section_labels_bin, np.eye(5)[section_preds_filtered], average='macro', multi_class='ovr')
+    section_auc = 0.0
+    try:
+        if len(set(section_labels_filtered)) > 1:
+            section_labels_bin = label_binarize(section_labels_filtered, classes=[0, 1, 2, 3, 4])
+            section_auc = roc_auc_score(section_labels_bin, np.eye(5)[section_preds_filtered], average='macro', multi_class='ovr')
+    except ValueError:
+        section_auc = 0.0
     
     metrics = {
         'intent': {
