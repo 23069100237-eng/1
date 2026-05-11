@@ -7,9 +7,9 @@
 """
 import os
 
-# 基础模型配置 - 使用绝对路径避免 HuggingFace 误识别为 repo id
+# 基础模型配置
 MODEL_NAME = 'allenai/scibert_scivocab_uncased'
-MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), 'scibert_scivocab_uncased'))
+MODEL_DIR = os.path.abspath('./scibert_scivocab_uncased')  # 本地模型目录
 HIDDEN_SIZE = 768
 PROMPT_LENGTH = 10  # 使用10个[unused] token
 DROPOUT_RATE = 0.3
