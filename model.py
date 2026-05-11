@@ -133,7 +133,7 @@ class CitationPromptModel(nn.Module):
         self._extend_position_embeddings(prompt_length)
 
     def _extend_position_embeddings(self, prompt_length):
-        """扩展位置嵌入以支持prompt tokens，并替换embeddings的forward方法"""
+        """扩展位置嵌入以支持prompt tokens"""
         max_position_embeddings = self.bert.config.max_position_embeddings
         new_max_len = max_position_embeddings + prompt_length
 
@@ -149,23 +149,6 @@ class CitationPromptModel(nn.Module):
         # 替换BERT的位置嵌入
         self.bert.embeddings.position_embeddings = new_embeddings
         self.bert.config.max_position_embeddings = new_max_len
-
-        # 替换embeddings的forward方法，使其不添加position_embeddings
-        # 因为我们已经在_build_embeddings中手动添加了位置嵌入
-        original_forward = self.bert.embeddings.forward
-
-        def custom_embeddings_forward(input_ids=None, token_type_ids=None, position_ids=None,
-                                     inputs_embeds=None, past_key_values_length=0):
-            if inputs_embeds is not None:
-                # 如果传入了inputs_embeds（我们已经手动添加了所有嵌入），直接返回
-                return inputs_embeds
-            else:
-                # 否则使用原始的forward方法
-                return original_forward(input_ids=input_ids, token_type_ids=token_type_ids,
-                                       position_ids=position_ids, inputs_embeds=inputs_embeds,
-                                       past_key_values_length=past_key_values_length)
-
-        self.bert.embeddings.forward = custom_embeddings_forward
 
     def _freeze_bert(self):
         for param in self.bert.parameters():
@@ -231,7 +214,11 @@ class CitationPromptModel(nn.Module):
             mask_type_ids
         ], dim=1)
 
-        return full_embeddings, attention_mask_full, token_type_ids_full
+        return (
+            full_embeddings.detach().clone(),
+            attention_mask_full,
+            token_type_ids_full
+        )
 
     def forward(self, input_ids, attention_mask, token_type_ids):
         prompt_intent = self.prompt_mlp_intent()
@@ -250,9 +237,10 @@ class CitationPromptModel(nn.Module):
 
         mask_position = prompt_intent.size(0) + input_ids.size(1) - 1
 
-        extended_attention_mask = self.bert.get_extended_attention_mask(
-            mask_intent, mask_intent.shape
-        )
+        # 正确处理 attention mask
+        extended_attention_mask = mask_intent[:, None, None, :]
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.bert.parameters()).dtype)
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
         outputs_intent = self.bert.encoder(
             hidden_states=emb_intent,
@@ -262,25 +250,17 @@ class CitationPromptModel(nn.Module):
         mask_hidden_intent = outputs_intent.last_hidden_state[:, mask_position, :]
         logits_intent = self.head_intent(mask_hidden_intent)
 
-        extended_attention_mask_section = self.bert.get_extended_attention_mask(
-            mask_section, mask_section.shape
-        )
-
         outputs_section = self.bert.encoder(
             hidden_states=emb_section,
-            attention_mask=extended_attention_mask_section
+            attention_mask=extended_attention_mask
         )
 
         mask_hidden_section = outputs_section.last_hidden_state[:, mask_position, :]
         logits_section = self.head_section(mask_hidden_section)
 
-        extended_attention_mask_worthiness = self.bert.get_extended_attention_mask(
-            mask_worthiness, mask_worthiness.shape
-        )
-
         outputs_worthiness = self.bert.encoder(
             hidden_states=emb_worthiness,
-            attention_mask=extended_attention_mask_worthiness
+            attention_mask=extended_attention_mask
         )
 
         mask_hidden_worthiness = outputs_worthiness.last_hidden_state[:, mask_position, :]
