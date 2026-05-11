@@ -1,0 +1,15 @@
+venv/
+scicite/
+acl-arc/
+__pycache__/
+*.pyc
+scibert_scivocab_uncased/
+checkpoints/
+outputs/
+logs/
+
+*.pth
+*.pt
+
+.idea/
+.vscode/
