@@ -219,6 +219,7 @@ class CitationDataset(Dataset):
         # 获取文本内容
         if self.dataset_type == 'acl-arc':
             text = item.get('text', '')
+            text = text + " [MASK]."
             intent_label = item.get('intent', '')
             section_label = item.get('section', '')
             worthiness_label = item.get('worthiness', 0)
@@ -231,15 +232,20 @@ class CitationDataset(Dataset):
             worthiness_label = 1 if item.get('isKeyCitation', False) else 0
         
         # 编码文本
-        encoding = self.tokenizer(
-            text,
-            truncation=True,
-            max_length=self.max_len - 3,  # 预留[CLS]、[MASK]、[SEP]位置
-            padding='max_length',
-            return_attention_mask=True,
-            return_token_type_ids=True,
-            return_tensors='pt'
-        )
+        # ===== Prompt Learning Template =====
+# [CLS] text [MASK] [SEP]
+
+            prompt_text = text + " " + self.tokenizer.mask_token
+
+            encoding = self.tokenizer(
+                prompt_text,
+                truncation=True,
+                max_length=self.max_len-10,
+                padding='max_length',
+                return_attention_mask=True,
+                return_token_type_ids=True,
+                return_tensors='pt'
+)
         
         # 获取标签ID
         intent_id = self.intent_label2id.get(intent_label, -1)

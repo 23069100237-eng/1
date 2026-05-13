@@ -1,0 +1,4 @@
+2026-05-12 23:08:56,594 - INFO - 开始训练，数据集: acl-arc
+2026-05-12 23:08:56,601 - WARNING - CUDA不可用，将使用CPU
+2026-05-12 23:08:56,601 - INFO - 加载tokenizer: D:\reproduce\scibert_scivocab_uncased
+2026-05-12 23:08:56,689 - INFO - 加载acl-arc数据集
