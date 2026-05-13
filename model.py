@@ -351,8 +351,24 @@ class CitationPromptModel(nn.Module):
             self.prompt_mlp_intent
         )
 
+        logits_section = self.forward_single_task(
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            self.prompt_mlp_section
+        )
+
+        logits_worthiness = self.forward_single_task(
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            self.prompt_mlp_worthiness
+        )
+
         return {
-            "intent": logits_intent
+            "intent": logits_intent,
+            "section": logits_section,
+            "worthiness": logits_worthiness
         }
     def compute_loss(
         self,

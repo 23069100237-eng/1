@@ -126,7 +126,9 @@ def main():
     # =========================
 
     label_expansions = {
-        'intent': LabelExpansionDict.get_intent_expansion()
+        'intent': LabelExpansionDict.get_intent_expansion(),
+        'section': LabelExpansionDict.get_section_expansion(),
+        'worthiness': LabelExpansionDict.get_worthiness_expansion()
     }
 
     intent_verbalizer = Verbalizer(
