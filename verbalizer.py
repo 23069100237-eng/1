@@ -23,9 +23,9 @@ class Verbalizer:
                 )
 
                 # 只保留单token
-                if len(token_ids) == 1:
+                if len(token_ids) > 0:
                     ids.append(token_ids[0])
-
+            ids = list(set(ids))
             self.label_word_ids[label] = ids
 
     def project(self, mask_logits):

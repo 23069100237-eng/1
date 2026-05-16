@@ -56,6 +56,7 @@ def evaluate_multitask(
     tokenizer,
     label_expansions,
     device='cuda'
+    
 ):
     """
     多任务评估
@@ -63,7 +64,6 @@ def evaluate_multitask(
     - 使用 verbalizer 做类别映射
     - 不再调用 model.predict()
     """
-
     model.eval()
 
     # ===== verbalizer =====
@@ -77,12 +77,16 @@ def evaluate_multitask(
         tokenizer,
         label_expansions['section']
     )
-
+    worthiness_verbalizer = Verbalizer(
+        tokenizer,
+        label_expansions['worthiness']
+    )
     # ===== collect =====
 
     all_preds_intent = []
     all_labels_intent = []
-
+    all_preds_worthiness = []
+    all_labels_worthiness = []
     all_preds_section = []
     all_labels_section = []
 
@@ -129,6 +133,18 @@ def evaluate_multitask(
                 section_logits,
                 dim=1
             )
+            # ==================================================
+            # worthiness
+            # ==================================================
+
+            worthiness_logits = worthiness_verbalizer.project(
+                outputs['worthiness']
+            )
+
+            preds_worthiness = torch.argmax(
+                worthiness_logits,
+                dim=1
+            )
 
             # ==================================================
             # collect
@@ -149,7 +165,13 @@ def evaluate_multitask(
             all_labels_section.extend(
                 batch['section_label'].cpu().tolist()
             )
+            all_preds_worthiness.extend(
+                preds_worthiness.cpu().tolist()
+            )
 
+            all_labels_worthiness.extend(
+                batch['worthiness_label'].long().cpu().tolist()
+            )
     # ==========================================================
     # filter invalid labels
     # ==========================================================
@@ -191,7 +213,9 @@ def evaluate_multitask(
         for i in range(len(all_preds_section))
         if section_mask[i]
     ]
+    worthiness_labels_filtered = all_labels_worthiness
 
+    worthiness_preds_filtered = all_preds_worthiness
     # ==========================================================
     # metrics
     # ==========================================================
@@ -270,6 +294,35 @@ def evaluate_multitask(
                 if len(section_labels_filtered) > 0
                 else 0.0
             )
+        },
+        'worthiness': {
+
+            'accuracy': 
+                accuracy_score(
+                worthiness_labels_filtered,
+                worthiness_preds_filtered
+    ),
+
+    'precision_macro': precision_score(
+        worthiness_labels_filtered,
+        worthiness_preds_filtered,
+        average='macro',
+        zero_division=0
+    ),
+
+    'recall_macro': recall_score(
+        worthiness_labels_filtered,
+        worthiness_preds_filtered,
+        average='macro',
+        zero_division=0
+    ),
+
+    'f1_macro': f1_score(
+        worthiness_labels_filtered,
+        worthiness_preds_filtered,
+        average='macro',
+        zero_division=0
+    )
         }
     }
 

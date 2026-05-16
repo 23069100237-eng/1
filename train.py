@@ -136,6 +136,16 @@ def main():
         label_expansions['intent']
     )
 
+    section_verbalizer = Verbalizer(
+        tokenizer,
+        label_expansions['section']
+    )
+
+    worthiness_verbalizer = Verbalizer(
+        tokenizer,
+        label_expansions['worthiness']
+    )
+
     # =========================
     # dataset
     # =========================
@@ -253,6 +263,14 @@ def main():
 
             labels_intent = batch['intent_label'].to(device)
 
+            labels_section = batch['section_label'].to(device)
+
+            labels_worthiness = (
+                batch['worthiness_label']
+                .long()
+                .to(device)
+            )
+
             optimizer.zero_grad()
 
             with torch.amp.autocast(
@@ -272,17 +290,66 @@ def main():
 
                 intent_logits = intent_verbalizer.project(
                     outputs['intent']
-                )
+                    )
 
-                # ======================
-                # loss
-                # ======================
+                section_logits = section_verbalizer.project(
+                    outputs['section']
+                    )
 
-                loss = F.cross_entropy(
+                worthiness_logits = worthiness_verbalizer.project(
+                    outputs['worthiness']
+                    )
+
+# ======================
+# task losses
+# ======================
+
+                intent_loss = F.cross_entropy(
                     intent_logits,
                     labels_intent,
                     ignore_index=-1
                 )
+
+                section_loss = F.cross_entropy(
+                    section_logits,
+                    labels_section,
+                    ignore_index=-1
+                )
+
+                worthiness_loss = F.cross_entropy(
+                    worthiness_logits,
+                    labels_worthiness
+                )
+
+# ======================
+# multitask loss
+# ======================
+
+                if args.dataset == 'scicite':
+
+                    loss = (
+                        1.0 * intent_loss
+                        +
+                        0.5 * worthiness_loss
+                    )
+
+                else:
+
+                    loss = (
+                        1.0 * intent_loss
+                        +
+                        0.5 * section_loss
+                        +
+                        0.5 * worthiness_loss
+                    )
+
+# ======================
+# soft parameter sharing
+# ======================
+
+                soft_loss = model.compute_soft_sharing_loss()
+
+                loss += 1e-5 * soft_loss
 
             scaler.scale(loss).backward()
 
@@ -324,9 +391,23 @@ def main():
             prefix='验证'
         )
 
-        current_val_accuracy = (
-            val_metrics['intent']['accuracy']
-        )
+        if args.dataset == 'scicite':
+
+            current_val_accuracy = (
+                val_metrics['intent']['accuracy']
+                +
+                val_metrics['worthiness']['accuracy']
+                ) / 2
+
+        else:
+
+            current_val_accuracy = (
+                val_metrics['intent']['accuracy']
+                +
+                val_metrics['section']['accuracy']
+                +
+                val_metrics['worthiness']['accuracy']
+                ) / 3
 
         logger.info(
             f"Val Accuracy: {current_val_accuracy:.4f}"
@@ -390,7 +471,16 @@ def inference():
         type=str,
         required=True
     )
-
+    parser.add_argument(
+        '--task',
+        type=str,
+        default='intent',
+        choices=[
+            'intent',
+            'section',
+            'worthiness'
+        ]
+)
     parser.add_argument(
         '--device',
         type=str,
@@ -434,7 +524,15 @@ def inference():
         tokenizer,
         label_expansions['intent']
     )
+    section_verbalizer = Verbalizer(
+        tokenizer,
+        label_expansions['section']
+        )
 
+    worthiness_verbalizer = Verbalizer(
+        tokenizer,
+        label_expansions['worthiness']
+    )
     text = args.text + " [MASK]"
 
     encoding = tokenizer(
@@ -461,12 +559,26 @@ def inference():
             token_type_ids
         )
 
-        intent_logits = intent_verbalizer.project(
+        if args.task == 'intent':
+
+            logits = intent_verbalizer.project(
             outputs['intent']
-        )
+    )
+
+        elif args.task == 'section':
+
+            logits = section_verbalizer.project(
+                outputs['section']
+            )
+
+        else:
+
+            logits = worthiness_verbalizer.project(
+                outputs['worthiness']
+            )
 
         predictions = torch.argmax(
-            intent_logits,
+            logits,
             dim=1
         )
 

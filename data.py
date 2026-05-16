@@ -6,27 +6,6 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 class LabelExpansionDict:
-    """
-    标签扩展字典 - 对应论文表1/表2的核心词映射
-    
-    引用意图识别 (citation_intent) 主任务标签：
-    - Background: 背景介绍
-    - Method: 方法引用
-    - Result: 结果对比
-    - Motivation: 动机说明
-    - Future: 未来工作
-    
-    引文章节识别 (citation_section) 辅助任务标签：
-    - Introduction: 引言
-    - Related Work: 相关工作
-    - Methods: 方法
-    - Results: 结果
-    - Discussion: 讨论
-    
-    引文价值识别 (citation_worthiness) 辅助任务标签：
-    - Worthy: 有价值
-    - Not Worthy: 无价值
-    """
     
     @staticmethod
     def get_intent_expansion():
@@ -120,8 +99,35 @@ class CitationDataset(Dataset):
         self.dataset_type = dataset_type
         
         # 标签到索引的映射
-        self.intent_labels = ['Background', 'Method', 'Result', 'Motivation', 'Future']
-        self.section_labels = ['Introduction', 'Related Work', 'Methods', 'Results', 'Discussion']
+        if dataset_type == 'scicite':
+
+            self.intent_labels = [
+                'Background',
+                'Method',
+                'Result'
+            ]
+
+            self.section_labels = []
+
+        else:
+
+            self.intent_labels = [
+                'Background',
+                'Compare/contrast',
+                'Extends',
+                'Future work',
+                'Motivation',
+                'Uses'
+            ]
+
+            self.section_labels = [
+                'Introduction',
+                'Related Work',
+                'Methods',
+                'Results',
+                'Discussion'
+            ]
+        
         self.intent_label2id = {label: idx for idx, label in enumerate(self.intent_labels)}
         self.section_label2id = {label: idx for idx, label in enumerate(self.section_labels)}
         
@@ -233,9 +239,14 @@ class CitationDataset(Dataset):
         
         # 编码文本
         # ===== Prompt Learning Template =====
-# [CLS] text [MASK] [SEP]
+        # [CLS] text [MASK] [SEP]
 
-            prompt_text = text + " " + self.tokenizer.mask_token
+            prompt_text = (
+                text +
+                " " +
+                self.tokenizer.mask_token +
+                "."
+            )
 
             encoding = self.tokenizer(
                 prompt_text,
@@ -245,7 +256,7 @@ class CitationDataset(Dataset):
                 return_attention_mask=True,
                 return_token_type_ids=True,
                 return_tensors='pt'
-)
+            )
         
         # 获取标签ID
         intent_id = self.intent_label2id.get(intent_label, -1)
@@ -270,20 +281,3 @@ def create_dataloader(dataset, batch_size=40, shuffle=True):
         num_workers=4,
         pin_memory=True
     )
-
-# 数据集样例格式说明
-# ACL-ARC格式:
-# {
-#   "text": "The transformer architecture has revolutionized NLP...",
-#   "intent": "Method",
-#   "section": "Introduction",
-#   "worthiness": 1
-# }
-#
-# SciCite格式:
-# {
-#   "text": "Recent work has shown...",
-#   "label": "Method",
-#   "section": "Related Work",
-#   "worthiness": 0
-# }

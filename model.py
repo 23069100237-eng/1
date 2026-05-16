@@ -381,5 +381,22 @@ class CitationPromptModel(nn.Module):
             labels,
             ignore_index=-1
         )
+    def compute_soft_sharing_loss(self):
+
+        loss = 0.0
+
+        prompt_modules = [
+            self.prompt_mlp_intent,
+            self.prompt_mlp_section,
+            self.prompt_mlp_worthiness
+        ]
+
+        for i in range(len(prompt_modules)):
+            for j in range(i + 1, len(prompt_modules)):
+
+                p1 = prompt_modules[i].prompt_embeddings
+                p2 = prompt_modules[j].prompt_embeddings
+
+                loss += torch.norm(p1 - p2, p=2)
 
         return loss
