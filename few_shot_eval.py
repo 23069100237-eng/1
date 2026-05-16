@@ -83,9 +83,15 @@ def evaluate_few_shot(
 
     model.eval()
 
-    intent_labels = list(
-        label_expansion['intent'].keys()
-    )
+    # ==================================================
+    # scicite labels
+    # ==================================================
+
+    intent_labels = [
+        'background',
+        'method',
+        'result'
+    ]
 
     examples = []
 
@@ -108,24 +114,11 @@ def evaluate_few_shot(
                 item.get('label', '')
             )
 
-            if isinstance(raw_label, str):
+            if not isinstance(raw_label, str):
 
-                raw_label = raw_label.lower()
-
-                if raw_label == 'background':
-                    label = 'Background'
-
-                elif raw_label == 'method':
-                    label = 'Method'
-
-                elif raw_label == 'result':
-                    label = 'Result'
-
-                else:
-                    label = raw_label.capitalize()
-
-            else:
                 continue
+
+            label = raw_label.lower()
 
             if label in train_by_label:
 
@@ -145,6 +138,10 @@ def evaluate_few_shot(
                 label,
                 []
             )
+
+            if len(available) == 0:
+
+                continue
 
             selected = random.sample(
                 available,
@@ -171,6 +168,10 @@ def evaluate_few_shot(
     with torch.no_grad():
 
         for item in progress_bar:
+
+            # ==================================================
+            # text + label
+            # ==================================================
 
             if isinstance(item, dict):
 
@@ -200,37 +201,18 @@ def evaluate_few_shot(
                     test_dataset.data[item].get('label', '')
                 )
 
-            # ==================================================
-            # label normalize
-            # ==================================================
-
-            if isinstance(raw_label, str):
-
-                raw_label = raw_label.lower()
-
-                if raw_label == 'background':
-                    true_label = 'Background'
-
-                elif raw_label == 'method':
-                    true_label = 'Method'
-
-                elif raw_label == 'result':
-                    true_label = 'Result'
-
-                else:
-                    true_label = raw_label.capitalize()
-
-            else:
+            if not isinstance(raw_label, str):
 
                 continue
+
+            true_label = raw_label.lower()
 
             if true_label not in intent_labels:
 
                 continue
 
             # ==================================================
-            # 构建输入
-            # 必须减去 PROMPT_LENGTH
+            # input
             # ==================================================
 
             prompt_text = (
@@ -265,7 +247,7 @@ def evaluate_few_shot(
             )
 
             # ==================================================
-            # forward
+            # MLM forward
             # ==================================================
 
             mask_logits = model.forward_single_task(
@@ -289,9 +271,21 @@ def evaluate_few_shot(
                 device=device
             )
 
-            for label_idx, (label, words) in enumerate(
-                label_expansion['intent'].items()
-            ):
+            verbalizer_mapping = {
+
+                'background':
+                    label_expansion['intent']['Background'],
+
+                'method':
+                    label_expansion['intent']['Method'],
+
+                'result':
+                    label_expansion['intent']['Result']
+            }
+
+            for label_idx, label in enumerate(intent_labels):
+
+                words = verbalizer_mapping[label]
 
                 word_ids = []
 
@@ -302,6 +296,7 @@ def evaluate_few_shot(
                         add_special_tokens=False
                     )
 
+                    # 只保留单token
                     if len(token_ids) == 1:
 
                         word_ids.append(
@@ -320,6 +315,12 @@ def evaluate_few_shot(
             ).item()
 
             pred_label = intent_labels[pred_idx]
+
+            pred_label = pred_label.lower()
+
+            # ==================================================
+            # accuracy
+            # ==================================================
 
             if pred_label == true_label:
 
@@ -346,7 +347,6 @@ def evaluate_few_shot(
     )
 
     return accuracy
-
 
 # =========================================================
 # main
