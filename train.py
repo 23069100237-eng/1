@@ -255,11 +255,62 @@ def main():
 
         for batch in progress_bar:
 
-            input_ids = batch['input_ids'].to(device)
+            # ==================================================
+            # intent inputs
+            # ==================================================
 
-            attention_mask = batch['attention_mask'].to(device)
+            intent_input_ids = (
+                batch['intent_input_ids']
+                .to(device)
+            )
 
-            token_type_ids = batch['token_type_ids'].to(device)
+            intent_attention_mask = (
+                batch['intent_attention_mask']
+                .to(device)
+            )
+
+            intent_token_type_ids = (
+                batch['intent_token_type_ids']
+                .to(device)
+            )
+
+            # ==================================================
+            # section inputs
+            # ==================================================
+
+            section_input_ids = (
+                batch['section_input_ids']
+                .to(device)
+            )
+
+            section_attention_mask = (
+                batch['section_attention_mask']
+                .to(device)
+            )
+
+            section_token_type_ids = (
+                batch['section_token_type_ids']
+                .to(device)
+            )
+
+            # ==================================================
+            # worthiness inputs
+            # ==================================================
+
+            worthiness_input_ids = (
+                batch['worthiness_input_ids']
+                .to(device)
+            )
+
+            worthiness_attention_mask = (
+                batch['worthiness_attention_mask']
+                .to(device)
+            )
+
+            worthiness_token_type_ids = (
+                batch['worthiness_token_type_ids']
+                .to(device)
+            )
 
             labels_intent = batch['intent_label'].to(device)
 
@@ -278,11 +329,47 @@ def main():
                 enabled=use_amp
             ):
 
-                outputs = model(
-                    input_ids,
-                    attention_mask,
-                    token_type_ids
-                )
+                outputs = {
+
+                    'intent':
+
+                        model.forward_single_task(
+
+                            intent_input_ids,
+
+                            intent_attention_mask,
+
+                            intent_token_type_ids,
+
+                            model.prompt_mlp_intent
+                        ),
+
+                    'section':
+
+                        model.forward_single_task(
+
+                            section_input_ids,
+
+                            section_attention_mask,
+
+                            section_token_type_ids,
+
+                            model.prompt_mlp_section
+                        ),
+
+                    'worthiness':
+
+                        model.forward_single_task(
+
+                            worthiness_input_ids,
+
+                            worthiness_attention_mask,
+
+                            worthiness_token_type_ids,
+
+                            model.prompt_mlp_worthiness
+                        )
+                }
 
                 # ======================
                 # verbalizer
@@ -290,19 +377,19 @@ def main():
 
                 intent_logits = intent_verbalizer.project(
                     outputs['intent']
-                    )
+                )
 
                 section_logits = section_verbalizer.project(
                     outputs['section']
-                    )
+                )
 
                 worthiness_logits = worthiness_verbalizer.project(
                     outputs['worthiness']
-                    )
+                )
 
-# ======================
-# task losses
-# ======================
+                # ======================
+                # task losses
+                # ======================
 
                 intent_loss = F.cross_entropy(
                     intent_logits,
@@ -321,9 +408,9 @@ def main():
                     labels_worthiness
                 )
 
-# ======================
-# multitask loss
-# ======================
+                # ======================
+                # multitask loss
+                # ======================
 
                 if args.dataset == 'scicite':
 
@@ -343,9 +430,9 @@ def main():
                         0.5 * worthiness_loss
                     )
 
-# ======================
-# soft parameter sharing
-# ======================
+                # ======================
+                # soft parameter sharing
+                # ======================
 
                 soft_loss = model.compute_soft_sharing_loss()
 
@@ -371,10 +458,6 @@ def main():
             f"Epoch {epoch+1} Train Loss: {avg_loss:.4f}"
         )
 
-        # =====================================================
-        # validation
-        # =====================================================
-
         logger.info("开始验证")
 
         val_metrics = evaluate_multitask(
@@ -397,7 +480,7 @@ def main():
                 val_metrics['intent']['accuracy']
                 +
                 val_metrics['worthiness']['accuracy']
-                ) / 2
+            ) / 2
 
         else:
 
@@ -407,15 +490,11 @@ def main():
                 val_metrics['section']['accuracy']
                 +
                 val_metrics['worthiness']['accuracy']
-                ) / 3
+            ) / 3
 
         logger.info(
             f"Val Accuracy: {current_val_accuracy:.4f}"
         )
-
-        # =====================================================
-        # early stopping
-        # =====================================================
 
         if current_val_accuracy > best_val_accuracy:
 
@@ -471,6 +550,7 @@ def inference():
         type=str,
         required=True
     )
+
     parser.add_argument(
         '--task',
         type=str,
@@ -480,7 +560,8 @@ def inference():
             'section',
             'worthiness'
         ]
-)
+    )
+
     parser.add_argument(
         '--device',
         type=str,
@@ -517,31 +598,74 @@ def inference():
     model.eval()
 
     label_expansions = {
-        'intent': LabelExpansionDict.get_intent_expansion()
+
+        'intent':
+            LabelExpansionDict.get_intent_expansion(),
+
+        'section':
+            LabelExpansionDict.get_section_expansion(),
+
+        'worthiness':
+            LabelExpansionDict.get_worthiness_expansion()
     }
 
     intent_verbalizer = Verbalizer(
         tokenizer,
         label_expansions['intent']
     )
+
     section_verbalizer = Verbalizer(
         tokenizer,
         label_expansions['section']
-        )
+    )
 
     worthiness_verbalizer = Verbalizer(
         tokenizer,
         label_expansions['worthiness']
     )
-    text = args.text + " [MASK]"
+
+    # ==================================================
+    # task-specific prompt
+    # ==================================================
+
+    if args.task == 'intent':
+
+        prompt_text = (
+            f"{args.text} "
+            f"This citation expresses "
+            f"{tokenizer.mask_token}."
+        )
+
+    elif args.task == 'section':
+
+        prompt_text = (
+            f"{args.text} "
+            f"This citation appears in the "
+            f"{tokenizer.mask_token} section."
+        )
+
+    else:
+
+        prompt_text = (
+            f"{args.text} "
+            f"This citation is "
+            f"{tokenizer.mask_token}."
+        )
 
     encoding = tokenizer(
-        text,
+
+        prompt_text,
+
         truncation=True,
+
         max_length=MAX_LEN,
+
         padding='max_length',
+
         return_attention_mask=True,
+
         return_token_type_ids=True,
+
         return_tensors='pt'
     )
 
@@ -553,28 +677,67 @@ def inference():
 
     with torch.no_grad():
 
-        outputs = model(
-            input_ids,
-            attention_mask,
-            token_type_ids
-        )
-
         if args.task == 'intent':
 
+            mask_logits = model.forward_single_task(
+
+                input_ids,
+
+                attention_mask,
+
+                token_type_ids,
+
+                model.prompt_mlp_intent
+            )
+
             logits = intent_verbalizer.project(
-            outputs['intent']
-    )
+                mask_logits
+            )
+
+            labels = list(
+                label_expansions['intent'].keys()
+            )
 
         elif args.task == 'section':
 
+            mask_logits = model.forward_single_task(
+
+                input_ids,
+
+                attention_mask,
+
+                token_type_ids,
+
+                model.prompt_mlp_section
+            )
+
             logits = section_verbalizer.project(
-                outputs['section']
+                mask_logits
+            )
+
+            labels = list(
+                label_expansions['section'].keys()
             )
 
         else:
 
+            mask_logits = model.forward_single_task(
+
+                input_ids,
+
+                attention_mask,
+
+                token_type_ids,
+
+                model.prompt_mlp_worthiness
+            )
+
             logits = worthiness_verbalizer.project(
-                outputs['worthiness']
+                mask_logits
+            )
+
+            labels = list(
+                label_expansions['worthiness'].keys()
             )
 
         predictions = torch.argmax(
@@ -582,18 +745,10 @@ def inference():
             dim=1
         )
 
-    intent_labels = list(
-        label_expansions['intent'].keys()
-    )
-
     print("\n预测结果:")
 
-    print(
-        f"引用意图: "
-        f"{intent_labels[predictions.item()]}"
-    )
-
-
+    print(labels[predictions.item()])
+    
 if __name__ == '__main__':
 
     import sys

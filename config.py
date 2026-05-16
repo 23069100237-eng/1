@@ -46,9 +46,9 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # 数据集文件名
 DATA_FILES = {
     'acl-arc': {
-        'train': os.path.join(DATA_DIR, 'acl-arc_train.json'),
-        'val': os.path.join(DATA_DIR, 'acl-arc_val.json'),
-        'test': os.path.join(DATA_DIR, 'acl-arc_test.json')
+        'train': os.path.join(DATA_DIR, 'train.jsonl'),
+        'val': os.path.join(DATA_DIR, 'dev.jsonl'),
+        'test': os.path.join(DATA_DIR, 'test.jsonl')
     },
     'scicite': {
         'train': os.path.join(DATA_DIR, 'train.jsonl'),

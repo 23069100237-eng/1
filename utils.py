@@ -55,18 +55,12 @@ def evaluate_multitask(
     dataloader,
     tokenizer,
     label_expansions,
-    device='cuda'
-    
+    device
 ):
-    """
-    多任务评估
-    当前版本：
-    - 使用 verbalizer 做类别映射
-    - 不再调用 model.predict()
-    """
-    model.eval()
 
-    # ===== verbalizer =====
+    from verbalizer import Verbalizer
+
+    model.eval()
 
     intent_verbalizer = Verbalizer(
         tokenizer,
@@ -77,253 +71,317 @@ def evaluate_multitask(
         tokenizer,
         label_expansions['section']
     )
+
     worthiness_verbalizer = Verbalizer(
         tokenizer,
         label_expansions['worthiness']
     )
-    # ===== collect =====
 
-    all_preds_intent = []
-    all_labels_intent = []
-    all_preds_worthiness = []
-    all_labels_worthiness = []
-    all_preds_section = []
-    all_labels_section = []
+    all_intent_preds = []
+    all_intent_labels = []
+
+    all_section_preds = []
+    all_section_labels = []
+
+    all_worthiness_preds = []
+    all_worthiness_labels = []
 
     with torch.no_grad():
 
         for batch in dataloader:
 
-            input_ids = batch['input_ids'].to(device)
-
-            attention_mask = batch['attention_mask'].to(device)
-
-            token_type_ids = batch['token_type_ids'].to(device)
-
-            # ===== forward =====
-
-            outputs = model(
-                input_ids,
-                attention_mask,
-                token_type_ids
-            )
-
             # ==================================================
             # intent
             # ==================================================
 
-            intent_logits = intent_verbalizer.project(
-                outputs['intent']
+            intent_input_ids = (
+                batch['intent_input_ids']
+                .to(device)
             )
 
-            preds_intent = torch.argmax(
-                intent_logits,
-                dim=1
+            intent_attention_mask = (
+                batch['intent_attention_mask']
+                .to(device)
+            )
+
+            intent_token_type_ids = (
+                batch['intent_token_type_ids']
+                .to(device)
             )
 
             # ==================================================
             # section
             # ==================================================
 
-            section_logits = section_verbalizer.project(
-                outputs['section']
+            section_input_ids = (
+                batch['section_input_ids']
+                .to(device)
             )
 
-            preds_section = torch.argmax(
-                section_logits,
-                dim=1
+            section_attention_mask = (
+                batch['section_attention_mask']
+                .to(device)
             )
+
+            section_token_type_ids = (
+                batch['section_token_type_ids']
+                .to(device)
+            )
+
             # ==================================================
             # worthiness
             # ==================================================
 
-            worthiness_logits = worthiness_verbalizer.project(
-                outputs['worthiness']
+            worthiness_input_ids = (
+                batch['worthiness_input_ids']
+                .to(device)
             )
 
-            preds_worthiness = torch.argmax(
+            worthiness_attention_mask = (
+                batch['worthiness_attention_mask']
+                .to(device)
+            )
+
+            worthiness_token_type_ids = (
+                batch['worthiness_token_type_ids']
+                .to(device)
+            )
+
+            # ==================================================
+            # labels
+            # ==================================================
+
+            labels_intent = (
+                batch['intent_label']
+                .to(device)
+            )
+
+            labels_section = (
+                batch['section_label']
+                .to(device)
+            )
+
+            labels_worthiness = (
+                batch['worthiness_label']
+                .long()
+                .to(device)
+            )
+
+            # ==================================================
+            # forward
+            # ==================================================
+
+            intent_outputs = model.forward_single_task(
+
+                intent_input_ids,
+
+                intent_attention_mask,
+
+                intent_token_type_ids,
+
+                model.prompt_mlp_intent
+            )
+
+            section_outputs = model.forward_single_task(
+
+                section_input_ids,
+
+                section_attention_mask,
+
+                section_token_type_ids,
+
+                model.prompt_mlp_section
+            )
+
+            worthiness_outputs = model.forward_single_task(
+
+                worthiness_input_ids,
+
+                worthiness_attention_mask,
+
+                worthiness_token_type_ids,
+
+                model.prompt_mlp_worthiness
+            )
+
+            # ==================================================
+            # verbalizer
+            # ==================================================
+
+            intent_logits = intent_verbalizer.project(
+                intent_outputs
+            )
+
+            section_logits = section_verbalizer.project(
+                section_outputs
+            )
+
+            worthiness_logits = worthiness_verbalizer.project(
+                worthiness_outputs
+            )
+
+            # ==================================================
+            # predictions
+            # ==================================================
+
+            intent_preds = torch.argmax(
+                intent_logits,
+                dim=1
+            )
+
+            section_preds = torch.argmax(
+                section_logits,
+                dim=1
+            )
+
+            worthiness_preds = torch.argmax(
                 worthiness_logits,
                 dim=1
             )
 
             # ==================================================
-            # collect
+            # save
             # ==================================================
 
-            all_preds_intent.extend(
-                preds_intent.cpu().tolist()
+            valid_intent = labels_intent != -1
+
+            all_intent_preds.extend(
+                intent_preds[valid_intent]
+                .cpu()
+                .tolist()
             )
 
-            all_labels_intent.extend(
-                batch['intent_label'].cpu().tolist()
+            all_intent_labels.extend(
+                labels_intent[valid_intent]
+                .cpu()
+                .tolist()
             )
 
-            all_preds_section.extend(
-                preds_section.cpu().tolist()
+            valid_section = labels_section != -1
+
+            all_section_preds.extend(
+                section_preds[valid_section]
+                .cpu()
+                .tolist()
             )
 
-            all_labels_section.extend(
-                batch['section_label'].cpu().tolist()
+            all_section_labels.extend(
+                labels_section[valid_section]
+                .cpu()
+                .tolist()
             )
-            all_preds_worthiness.extend(
-                preds_worthiness.cpu().tolist()
+
+            all_worthiness_preds.extend(
+                worthiness_preds
+                .cpu()
+                .tolist()
             )
 
-            all_labels_worthiness.extend(
-                batch['worthiness_label'].long().cpu().tolist()
+            all_worthiness_labels.extend(
+                labels_worthiness
+                .cpu()
+                .tolist()
             )
-    # ==========================================================
-    # filter invalid labels
-    # ==========================================================
 
-    # ===== intent =====
-
-    intent_mask = [
-        label != -1
-        for label in all_labels_intent
-    ]
-
-    intent_labels_filtered = [
-        all_labels_intent[i]
-        for i in range(len(all_labels_intent))
-        if intent_mask[i]
-    ]
-
-    intent_preds_filtered = [
-        all_preds_intent[i]
-        for i in range(len(all_preds_intent))
-        if intent_mask[i]
-    ]
-
-    # ===== section =====
-
-    section_mask = [
-        label != -1
-        for label in all_labels_section
-    ]
-
-    section_labels_filtered = [
-        all_labels_section[i]
-        for i in range(len(all_labels_section))
-        if section_mask[i]
-    ]
-
-    section_preds_filtered = [
-        all_preds_section[i]
-        for i in range(len(all_preds_section))
-        if section_mask[i]
-    ]
-    worthiness_labels_filtered = all_labels_worthiness
-
-    worthiness_preds_filtered = all_preds_worthiness
-    # ==========================================================
+    # ==================================================
     # metrics
-    # ==========================================================
+    # ==================================================
 
-    metrics = {
+    from sklearn.metrics import (
+        accuracy_score,
+        precision_recall_fscore_support
+    )
 
-        'intent': {
+    metrics = {}
+
+    # ================= intent =================
+
+    intent_precision, intent_recall, intent_f1, _ = (
+        precision_recall_fscore_support(
+            all_intent_labels,
+            all_intent_preds,
+            average='macro',
+            zero_division=0
+        )
+    )
+
+    metrics['intent'] = {
+
+        'accuracy': accuracy_score(
+            all_intent_labels,
+            all_intent_preds
+        ),
+
+        'precision': intent_precision,
+
+        'recall': intent_recall,
+
+        'f1': intent_f1
+    }
+
+    # ================= section =================
+
+    if len(all_section_labels) > 0:
+
+        section_precision, section_recall, section_f1, _ = (
+            precision_recall_fscore_support(
+                all_section_labels,
+                all_section_preds,
+                average='macro',
+                zero_division=0
+            )
+        )
+
+        metrics['section'] = {
 
             'accuracy': accuracy_score(
-                intent_labels_filtered,
-                intent_preds_filtered
+                all_section_labels,
+                all_section_preds
             ),
 
-            'precision_macro': precision_score(
-                intent_labels_filtered,
-                intent_preds_filtered,
-                average='macro',
-                zero_division=0
-            ),
+            'precision': section_precision,
 
-            'recall_macro': recall_score(
-                intent_labels_filtered,
-                intent_preds_filtered,
-                average='macro',
-                zero_division=0
-            ),
+            'recall': section_recall,
 
-            'f1_macro': f1_score(
-                intent_labels_filtered,
-                intent_preds_filtered,
-                average='macro',
-                zero_division=0
-            )
-        },
-
-        'section': {
-
-            'accuracy': (
-                accuracy_score(
-                    section_labels_filtered,
-                    section_preds_filtered
-                )
-                if len(section_labels_filtered) > 0
-                else 0.0
-            ),
-
-            'precision_macro': (
-                precision_score(
-                    section_labels_filtered,
-                    section_preds_filtered,
-                    average='macro',
-                    zero_division=0
-                )
-                if len(section_labels_filtered) > 0
-                else 0.0
-            ),
-
-            'recall_macro': (
-                recall_score(
-                    section_labels_filtered,
-                    section_preds_filtered,
-                    average='macro',
-                    zero_division=0
-                )
-                if len(section_labels_filtered) > 0
-                else 0.0
-            ),
-
-            'f1_macro': (
-                f1_score(
-                    section_labels_filtered,
-                    section_preds_filtered,
-                    average='macro',
-                    zero_division=0
-                )
-                if len(section_labels_filtered) > 0
-                else 0.0
-            )
-        },
-        'worthiness': {
-
-            'accuracy': 
-                accuracy_score(
-                worthiness_labels_filtered,
-                worthiness_preds_filtered
-    ),
-
-    'precision_macro': precision_score(
-        worthiness_labels_filtered,
-        worthiness_preds_filtered,
-        average='macro',
-        zero_division=0
-    ),
-
-    'recall_macro': recall_score(
-        worthiness_labels_filtered,
-        worthiness_preds_filtered,
-        average='macro',
-        zero_division=0
-    ),
-
-    'f1_macro': f1_score(
-        worthiness_labels_filtered,
-        worthiness_preds_filtered,
-        average='macro',
-        zero_division=0
-    )
+            'f1': section_f1
         }
+
+    else:
+
+        metrics['section'] = {
+
+            'accuracy': 0.0,
+
+            'precision': 0.0,
+
+            'recall': 0.0,
+
+            'f1': 0.0
+        }
+
+    # ================= worthiness =================
+
+    worthiness_precision, worthiness_recall, worthiness_f1, _ = (
+        precision_recall_fscore_support(
+            all_worthiness_labels,
+            all_worthiness_preds,
+            average='macro',
+            zero_division=0
+        )
+    )
+
+    metrics['worthiness'] = {
+
+        'accuracy': accuracy_score(
+            all_worthiness_labels,
+            all_worthiness_preds
+        ),
+
+        'precision': worthiness_precision,
+
+        'recall': worthiness_recall,
+
+        'f1': worthiness_f1
     }
 
     return metrics

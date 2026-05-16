@@ -30,27 +30,35 @@ class Verbalizer:
 
     def project(self, mask_logits):
 
-        class_logits = []
+        probs = F.softmax(mask_logits, dim=-1)
+
+        class_scores = []
 
         for label, word_ids in self.label_word_ids.items():
 
-            if len(word_ids) == 0:
+            valid_ids = []
+
+            for wid in word_ids:
+
+                if wid != self.tokenizer.unk_token_id:
+                    valid_ids.append(wid)
+
+            if len(valid_ids) == 0:
 
                 score = torch.zeros(
-                    mask_logits.size(0),
-                    device=mask_logits.device
-                )
+                    probs.size(0),
+                 device=probs.device
+            )
 
             else:
 
-            # 不做 softmax
-                score = mask_logits[:, word_ids].mean(dim=1)
+                score = probs[:, valid_ids].mean(dim=1)
 
-            class_logits.append(score)
+            class_scores.append(score)
 
-        class_logits = torch.stack(
-            class_logits,
+        class_scores = torch.stack(
+            class_scores,
             dim=1
     )
 
-        return class_logits
+        return torch.log(class_scores + 1e-12)
