@@ -1,10 +1,10 @@
 """
-少样本验证脚本 - 支持0-shot、1-shot、5-shot、10-shot、20-shot
+few_shot_eval.py
+修正版
 """
 
 import argparse
 import json
-import random
 import torch
 
 from transformers import AutoTokenizer
@@ -13,212 +13,71 @@ from tqdm import tqdm
 from data import CitationDataset, LabelExpansionDict
 from model import CitationPromptModel
 from verbalizer import Verbalizer
-from utils import setup_logging
 
 from config import *
 
-random.seed(42)
+from utils import setup_logging
 
-# =========================================================
-# build few-shot prompt
-# =========================================================
-
-def create_few_shot_prompt(
-    tokenizer,
-    examples,
-    test_text,
-    max_len=512
-):
-
-    prompt = ""
-
-    for example in examples:
-
-        prompt += (
-            f"Citation: {example['text']}\n"
-            f"Intent: {example['label']}\n\n"
-        )
-
-    prompt += (
-        f"Citation: {test_text}\n"
-        f"Intent: {tokenizer.mask_token}"
-    )
-
-    encoding = tokenizer(
-
-        prompt,
-
-        truncation=True,
-
-        max_length=max_len,
-
-        padding='max_length',
-
-        return_attention_mask=True,
-
-        return_token_type_ids=True,
-
-        return_tensors='pt'
-    )
-
-    return encoding
-
-
-# =========================================================
-# few-shot eval
-# =========================================================
 
 def evaluate_few_shot(
     model,
     test_dataset,
-    train_dataset,
     tokenizer,
-    shots,
     device,
-    label_expansion
+    verbalizer,
+    intent_labels
 ):
-    """
-    执行少样本评估
-    """
 
     model.eval()
 
-    # ==================================================
-    # scicite labels
-    # ==================================================
-
-    intent_labels = [
-        'background',
-        'method',
-        'result'
-    ]
-
-    examples = []
-
-    # ==================================================
-    # 构建 few-shot examples
-    # ==================================================
-
-    if shots > 0:
-
-        train_by_label = {
-            label: []
-            for label in intent_labels
-        }
-
-        for item in train_dataset:
-
-            raw_label = (
-                item.get('intent', '')
-                or
-                item.get('label', '')
-            )
-
-            if not isinstance(raw_label, str):
-
-                continue
-
-            label = raw_label.lower()
-
-            if label in train_by_label:
-
-                train_by_label[label].append({
-
-                    'text':
-                        item.get('text', '')
-                        or
-                        item.get('string', ''),
-
-                    'label': label
-                })
-
-        for label in intent_labels:
-
-            available = train_by_label.get(
-                label,
-                []
-            )
-
-            if len(available) == 0:
-
-                continue
-
-            selected = random.sample(
-                available,
-                min(shots, len(available))
-            )
-
-            examples.extend(selected)
-
-        random.shuffle(examples)
-
-    # ==================================================
-    # evaluate
-    # ==================================================
-
     correct = 0
-
     total = 0
 
     progress_bar = tqdm(
         test_dataset,
-        desc=f"{shots}-shot"
+        desc="evaluating"
     )
 
     with torch.no_grad():
 
         for item in progress_bar:
 
-            # ==================================================
-            # text + label
-            # ==================================================
+            text = item.get('string', '')
 
-            if isinstance(item, dict):
+            raw_label = item.get(
+                'label',
+                ''
+            ).lower()
 
-                test_text = (
-                    item.get('text', '')
-                    or
-                    item.get('string', '')
-                )
+            # =========================
+            # label normalize
+            # =========================
 
-                raw_label = (
-                    item.get('intent', '')
-                    or
-                    item.get('label', '')
-                )
+            if raw_label == 'background':
+
+                true_label = 'Background'
+
+            elif raw_label == 'method':
+
+                true_label = 'Method'
+
+            elif raw_label == 'result':
+
+                true_label = 'Result'
 
             else:
 
-                test_text = (
-                    test_dataset.data[item].get('text', '')
-                    or
-                    test_dataset.data[item].get('string', '')
-                )
-
-                raw_label = (
-                    test_dataset.data[item].get('intent', '')
-                    or
-                    test_dataset.data[item].get('label', '')
-                )
-
-            if not isinstance(raw_label, str):
-
                 continue
 
-            true_label = raw_label.lower()
-
-            if true_label not in intent_labels:
-
-                continue
-
-            # ==================================================
-            # input
-            # ==================================================
+            # =========================
+            # prompt text
+            # =========================
 
             prompt_text = (
-                test_text
+                text
                 + " "
                 + tokenizer.mask_token
+                + "."
             )
 
             encoding = tokenizer(
@@ -231,24 +90,21 @@ def evaluate_few_shot(
                 return_tensors='pt'
             )
 
-            input_ids = (
-                encoding['input_ids']
-                .to(device)
-            )
+            input_ids = encoding[
+                'input_ids'
+            ].to(device)
 
-            attention_mask = (
-                encoding['attention_mask']
-                .to(device)
-            )
+            attention_mask = encoding[
+                'attention_mask'
+            ].to(device)
 
-            token_type_ids = (
-                encoding['token_type_ids']
-                .to(device)
-            )
+            token_type_ids = encoding[
+                'token_type_ids'
+            ].to(device)
 
-            # ==================================================
+            # =========================
             # MLM forward
-            # ==================================================
+            # =========================
 
             mask_logits = model.forward_single_task(
                 input_ids,
@@ -257,70 +113,26 @@ def evaluate_few_shot(
                 model.prompt_mlp_intent
             )
 
-            probs = torch.softmax(
-                mask_logits,
-                dim=1
-            )
-
-            # ==================================================
+            # =========================
             # verbalizer
-            # ==================================================
+            # =========================
 
-            label_probs = torch.zeros(
-                len(intent_labels),
-                device=device
+            class_logits = verbalizer.project(
+                mask_logits
             )
-
-            verbalizer_mapping = {
-
-                'background':
-                    label_expansion['intent']['Background'],
-
-                'method':
-                    label_expansion['intent']['Method'],
-
-                'result':
-                    label_expansion['intent']['Result']
-            }
-
-            for label_idx, label in enumerate(intent_labels):
-
-                words = verbalizer_mapping[label]
-
-                word_ids = []
-
-                for word in words:
-
-                    token_ids = tokenizer.encode(
-                        word,
-                        add_special_tokens=False
-                    )
-
-                    # 只保留单token
-                    if len(token_ids) == 1:
-
-                        word_ids.append(
-                            token_ids[0]
-                        )
-
-                if len(word_ids) > 0:
-
-                    label_probs[label_idx] = (
-                        probs[0, word_ids]
-                        .mean()
-                    )
 
             pred_idx = torch.argmax(
-                label_probs
+                class_logits,
+                dim=1
             ).item()
 
-            pred_label = intent_labels[pred_idx]
+            pred_label = intent_labels[
+                pred_idx
+            ]
 
-            pred_label = pred_label.lower()
-
-            # ==================================================
+            # =========================
             # accuracy
-            # ==================================================
+            # =========================
 
             if pred_label == true_label:
 
@@ -329,15 +141,7 @@ def evaluate_few_shot(
             total += 1
 
             progress_bar.set_postfix({
-
-                'acc':
-                    f"{correct / total:.4f}",
-
-                'correct':
-                    correct,
-
-                'total':
-                    total
+                'acc': f"{correct / total:.4f}"
             })
 
     accuracy = (
@@ -348,51 +152,30 @@ def evaluate_few_shot(
 
     return accuracy
 
-# =========================================================
-# main
-# =========================================================
 
 def main():
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description='Few Shot Evaluation'
+    )
 
     parser.add_argument(
-
         '--model_path',
-
         type=str,
-
         default='./output/best_model.pt'
     )
 
     parser.add_argument(
-
-        '--shots',
-
-        type=int,
-
-        nargs='+',
-
-        default=[0, 1, 5, 10, 20]
-    )
-
-    parser.add_argument(
-
         '--device',
-
         type=str,
-
         default='cuda'
         if torch.cuda.is_available()
         else 'cpu'
     )
 
     parser.add_argument(
-
         '--dataset',
-
         type=str,
-
         default='scicite'
     )
 
@@ -406,56 +189,30 @@ def main():
         f"使用设备: {args.device}"
     )
 
-    # =====================================================
+    # =========================
     # tokenizer
-    # =====================================================
+    # =========================
 
     tokenizer = AutoTokenizer.from_pretrained(
-
         MODEL_DIR,
-
         local_files_only=True
     )
 
-    # =====================================================
-    # labels
-    # =====================================================
-
-    label_expansions = {
-
-        'intent':
-            LabelExpansionDict.get_intent_expansion(),
-
-        'section':
-            LabelExpansionDict.get_section_expansion(),
-
-        'worthiness':
-            LabelExpansionDict.get_worthiness_expansion()
-    }
-
-    # =====================================================
+    # =========================
     # dataset
-    # =====================================================
+    # =========================
 
     train_dataset = CitationDataset(
-
         DATA_FILES[args.dataset]['train'],
-
         tokenizer,
-
         max_len=MAX_LEN,
-
         dataset_type=args.dataset
     )
 
     test_dataset = CitationDataset(
-
         DATA_FILES[args.dataset]['test'],
-
         tokenizer,
-
         max_len=MAX_LEN,
-
         dataset_type=args.dataset
     )
 
@@ -467,29 +224,21 @@ def main():
         f"test size: {len(test_dataset)}"
     )
 
-    # =====================================================
+    # =========================
     # model
-    # =====================================================
+    # =========================
 
     model = CitationPromptModel(
-
         model_name=MODEL_NAME,
-
         model_dir=MODEL_DIR,
-
         prompt_length=PROMPT_LENGTH,
-
         hidden_size=HIDDEN_SIZE,
-
         dropout_rate=DROPOUT_RATE,
-
         alpha=L2_ALPHA
     )
 
     checkpoint = torch.load(
-
         args.model_path,
-
         map_location=args.device
     )
 
@@ -501,81 +250,72 @@ def main():
 
     logger.info("模型加载完成")
 
-    # =====================================================
-    # eval
-    # =====================================================
+    # =========================
+    # verbalizer
+    # =========================
 
-    results = {}
+    label_expansions = {
+        'intent':
+        LabelExpansionDict.get_intent_expansion()
+    }
 
-    print("\n" + "=" * 60)
+    intent_verbalizer = Verbalizer(
+        tokenizer,
+        label_expansions['intent']
+    )
 
-    print(f"{args.dataset} Few-Shot Results")
+    intent_labels = list(
+        label_expansions['intent'].keys()
+    )
 
-    print("=" * 60)
-
-    for shots in args.shots:
-
-        logger.info(
-            f"开始 {shots}-shot"
-        )
-
-        accuracy = evaluate_few_shot(
-
-            model,
-
-            test_dataset,
-
-            train_dataset,
-
-            tokenizer,
-
-            shots,
-
-            args.device,
-
-            label_expansions
-        )
-
-        results[shots] = accuracy
-
-        print(f"\n{shots}-shot")
-
-        print(f"Accuracy: {accuracy:.4f}")
+    # =========================
+    # evaluate
+    # =========================
 
     print("\n" + "=" * 60)
 
-    print("Summary")
+    print(
+        f"{args.dataset} Evaluation Results"
+    )
 
     print("=" * 60)
 
-    for shots in sorted(results.keys()):
+    accuracy = evaluate_few_shot(
+        model=model,
+        test_dataset=test_dataset.data,
+        tokenizer=tokenizer,
+        device=args.device,
+        verbalizer=intent_verbalizer,
+        intent_labels=intent_labels
+    )
 
-        print(
-            f"{shots}-shot: "
-            f"{results[shots]:.4f}"
-        )
+    print("\nAccuracy: "
+          f"{accuracy:.4f}")
+
+    print("=" * 60)
+
+    # =========================
+    # save
+    # =========================
+
+    results = {
+        'accuracy': accuracy
+    }
 
     with open(
-
         'few_shot_results.json',
-
         'w',
-
         encoding='utf-8'
     ) as f:
 
         json.dump(
-
             results,
-
             f,
-
             indent=4,
-
             ensure_ascii=False
         )
 
-    logger.info("few-shot eval finished")
+    logger.info("评估完成")
 
 
 if __name__ == '__main__':
