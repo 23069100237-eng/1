@@ -69,38 +69,29 @@ def create_few_shot_prompt(
 # =========================================================
 
 def evaluate_few_shot(
-
     model,
-
     test_dataset,
-
     train_dataset,
-
     tokenizer,
-
     shots,
-
     device,
-
     label_expansion
 ):
+    """
+    执行少样本评估
+    """
 
     model.eval()
-
-    verbalizer = Verbalizer(
-        tokenizer,
-        label_expansion['intent']
-    )
 
     intent_labels = list(
         label_expansion['intent'].keys()
     )
 
-    # =====================================================
-    # build support set
-    # =====================================================
-
     examples = []
+
+    # ==================================================
+    # 构建 few-shot examples
+    # ==================================================
 
     if shots > 0:
 
@@ -109,70 +100,54 @@ def evaluate_few_shot(
             for label in intent_labels
         }
 
-        for item in train_dataset.data:
+        for item in train_dataset:
 
-            if train_dataset.dataset_type == 'scicite':
+            raw_label = (
+                item.get('intent', '')
+                or
+                item.get('label', '')
+            )
 
-                raw_label = item.get(
-                    'label',
-                    ''
-                ).lower()
+            if isinstance(raw_label, str):
 
-                label_map = {
+                raw_label = raw_label.lower()
 
-                    'background': 'Background',
+                if raw_label == 'background':
+                    label = 'Background'
 
-                    'method': 'Method',
+                elif raw_label == 'method':
+                    label = 'Method'
 
-                    'result': 'Result'
-                }
+                elif raw_label == 'result':
+                    label = 'Result'
 
-                label = label_map.get(
-                    raw_label,
-                    None
-                )
-
-                text = item.get(
-                    'string',
-                    ''
-                )
+                else:
+                    label = raw_label.capitalize()
 
             else:
+                continue
 
-                label = item.get(
-                    'intent',
-                    None
-                )
-
-                text = item.get(
-                    'text',
-                    ''
-                )
-
-            if (
-                label in train_by_label
-                and
-                text
-            ):
+            if label in train_by_label:
 
                 train_by_label[label].append({
 
-                    'text': text,
+                    'text':
+                        item.get('text', '')
+                        or
+                        item.get('string', ''),
 
                     'label': label
                 })
 
         for label in intent_labels:
 
-            available = train_by_label[label]
-
-            if len(available) == 0:
-                continue
+            available = train_by_label.get(
+                label,
+                []
+            )
 
             selected = random.sample(
-
                 available,
-
                 min(shots, len(available))
             )
 
@@ -180,16 +155,16 @@ def evaluate_few_shot(
 
         random.shuffle(examples)
 
-    # =====================================================
-    # evaluation
-    # =====================================================
+    # ==================================================
+    # evaluate
+    # ==================================================
 
     correct = 0
 
     total = 0
 
     progress_bar = tqdm(
-        test_dataset.data,
+        test_dataset,
         desc=f"{shots}-shot"
     )
 
@@ -197,69 +172,81 @@ def evaluate_few_shot(
 
         for item in progress_bar:
 
-            # =================================================
-            # text + label
-            # =================================================
+            if isinstance(item, dict):
 
-            if test_dataset.dataset_type == 'scicite':
-
-                test_text = item.get(
-                    'string',
-                    ''
+                test_text = (
+                    item.get('text', '')
+                    or
+                    item.get('string', '')
                 )
 
-                raw_label = item.get(
-                    'label',
-                    ''
-                ).lower()
-
-                label_map = {
-
-                    'background': 'Background',
-
-                    'method': 'Method',
-
-                    'result': 'Result'
-                }
-
-                true_label = label_map.get(
-                    raw_label,
-                    None
+                raw_label = (
+                    item.get('intent', '')
+                    or
+                    item.get('label', '')
                 )
 
             else:
 
-                test_text = item.get(
-                    'text',
-                    ''
+                test_text = (
+                    test_dataset.data[item].get('text', '')
+                    or
+                    test_dataset.data[item].get('string', '')
                 )
 
-                true_label = item.get(
-                    'intent',
-                    None
+                raw_label = (
+                    test_dataset.data[item].get('intent', '')
+                    or
+                    test_dataset.data[item].get('label', '')
                 )
 
-            if (
-                not test_text
-                or
-                true_label not in intent_labels
-            ):
+            # ==================================================
+            # label normalize
+            # ==================================================
+
+            if isinstance(raw_label, str):
+
+                raw_label = raw_label.lower()
+
+                if raw_label == 'background':
+                    true_label = 'Background'
+
+                elif raw_label == 'method':
+                    true_label = 'Method'
+
+                elif raw_label == 'result':
+                    true_label = 'Result'
+
+                else:
+                    true_label = raw_label.capitalize()
+
+            else:
 
                 continue
 
-            # =================================================
-            # build prompt
-            # =================================================
+            if true_label not in intent_labels:
 
-            encoding = create_few_shot_prompt(
+                continue
 
-                tokenizer,
+            # ==================================================
+            # 构建输入
+            # 必须减去 PROMPT_LENGTH
+            # ==================================================
 
-                examples,
+            prompt_text = (
+                test_text
+                + " "
+                + tokenizer.mask_token
+            )
 
-                test_text,
-
-                MAX_LEN
+            encoding = tokenizer(
+                prompt_text,
+                truncation=True,
+                max_length=MAX_LEN - PROMPT_LENGTH,
+                padding='max_length',
+                return_attention_mask=True,
+                return_token_type_ids=True,
+                return_tensors='pt'
             )
 
             input_ids = (
@@ -277,35 +264,62 @@ def evaluate_few_shot(
                 .to(device)
             )
 
-            # =================================================
+            # ==================================================
             # forward
-            # =================================================
+            # ==================================================
 
             mask_logits = model.forward_single_task(
-
                 input_ids,
-
                 attention_mask,
-
                 token_type_ids,
-
                 model.prompt_mlp_intent
             )
 
-            logits = verbalizer.project(
-                mask_logits
+            probs = torch.softmax(
+                mask_logits,
+                dim=1
             )
 
+            # ==================================================
+            # verbalizer
+            # ==================================================
+
+            label_probs = torch.zeros(
+                len(intent_labels),
+                device=device
+            )
+
+            for label_idx, (label, words) in enumerate(
+                label_expansion['intent'].items()
+            ):
+
+                word_ids = []
+
+                for word in words:
+
+                    token_ids = tokenizer.encode(
+                        word,
+                        add_special_tokens=False
+                    )
+
+                    if len(token_ids) == 1:
+
+                        word_ids.append(
+                            token_ids[0]
+                        )
+
+                if len(word_ids) > 0:
+
+                    label_probs[label_idx] = (
+                        probs[0, word_ids]
+                        .mean()
+                    )
+
             pred_idx = torch.argmax(
-                logits,
-                dim=1
+                label_probs
             ).item()
 
             pred_label = intent_labels[pred_idx]
-
-            # =================================================
-            # metrics
-            # =================================================
 
             if pred_label == true_label:
 
@@ -315,7 +329,14 @@ def evaluate_few_shot(
 
             progress_bar.set_postfix({
 
-                'acc': f"{correct / total:.4f}"
+                'acc':
+                    f"{correct / total:.4f}",
+
+                'correct':
+                    correct,
+
+                'total':
+                    total
             })
 
     accuracy = (
