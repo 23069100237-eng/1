@@ -239,87 +239,45 @@ def train_few_shot(
 
 def evaluate(
     model,
-    test_dataset,
-    tokenizer,
+    dataloader,
     verbalizer,
-    device
+    device,
+    intent_labels
 ):
 
     model.eval()
 
-    intent_labels = [
-        'Background',
-        'Method',
-        'Result'
-    ]
-
     correct = 0
-
     total = 0
 
     progress_bar = tqdm(
-        test_dataset.data,
-        desc='evaluating'
+        dataloader,
+        desc="evaluating"
     )
 
     with torch.no_grad():
 
-        for item in progress_bar:
+        for batch in progress_bar:
 
-            text = item.get(
-                'string',
-                ''
+            input_ids = (
+                batch['input_ids']
+                .to(device)
             )
 
-            raw_label = item.get(
-                'label',
-                ''
-            ).lower()
-
-            if raw_label == 'background':
-
-                true_label = 'Background'
-
-            elif raw_label == 'method':
-
-                true_label = 'Method'
-
-            elif raw_label == 'result':
-
-                true_label = 'Result'
-
-            else:
-
-                continue
-
-            prompt_text = (
-                text
-                + " "
-                + tokenizer.mask_token
-                + "."
+            attention_mask = (
+                batch['attention_mask']
+                .to(device)
             )
 
-            encoding = tokenizer(
-                prompt_text,
-                truncation=True,
-                max_length=MAX_LEN - PROMPT_LENGTH,
-                padding='max_length',
-                return_attention_mask=True,
-                return_token_type_ids=True,
-                return_tensors='pt'
+            token_type_ids = (
+                batch['token_type_ids']
+                .to(device)
             )
 
-            input_ids = encoding[
-                'input_ids'
-            ].to(device)
-
-            attention_mask = encoding[
-                'attention_mask'
-            ].to(device)
-
-            token_type_ids = encoding[
-                'token_type_ids'
-            ].to(device)
+            labels = (
+                batch['intent_label']
+                .to(device)
+            )
 
             mask_logits = model.forward_single_task(
                 input_ids,
@@ -328,31 +286,55 @@ def evaluate(
                 model.prompt_mlp_intent
             )
 
-            class_logits = verbalizer.project(
+            logits = verbalizer.project(
                 mask_logits
             )
 
-            pred_idx = torch.argmax(
-                class_logits,
+            predictions = torch.argmax(
+                logits,
                 dim=1
-            ).item()
+            )
 
-            pred_label = intent_labels[
-                pred_idx
-            ]
+            for pred, label in zip(
+                predictions,
+                labels
+            ):
 
-            if pred_label == true_label:
+                if label.item() == -1:
+                    continue
 
-                correct += 1
+                pred_idx = pred.item()
 
-            total += 1
+                # 防止越界
+                pred_idx = min(
+                    pred_idx,
+                    len(intent_labels) - 1
+                )
+
+                pred_label = intent_labels[
+                    pred_idx
+                ]
+
+                true_label = intent_labels[
+                    label.item()
+                ]
+
+                if pred_label == true_label:
+                    correct += 1
+
+                total += 1
 
             progress_bar.set_postfix({
-                'acc': f"{correct/total:.4f}"
+                'acc': f"{correct / max(total,1):.4f}"
             })
 
-    return correct / total
+    accuracy = (
+        correct / total
+        if total > 0
+        else 0.0
+    )
 
+    return accuracy
 
 # =========================================================
 # main
